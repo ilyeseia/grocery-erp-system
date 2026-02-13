@@ -1,0 +1,422 @@
+// Grocery Store ERP System - Prisma Schema
+// Production-ready database design with proper relations
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          UserRole @default(CASHIER)
+  isActive      Boolean  @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  sales         Sale[]
+  purchases     Purchase[]
+  expenses      Expense[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+  sessions      Session[]
+
+  @@index([email])
+  @@index([role])
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  CASHIER
+  ACCOUNTANT
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+// ============================================
+// PRODUCT MANAGEMENT
+// ============================================
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  products Product[]
+
+  @@index([name])
+}
+
+model Product {
+  id             String   @id @default(cuid())
+  name           String
+  barcode        String   @unique
+  categoryId     String
+  purchasePrice  Float    @default(0)
+  sellingPrice   Float    @default(0)
+  taxPercentage  Float    @default(0)
+  minStockLevel  Int      @default(10)
+  maxStockLevel  Int      @default(100)
+  unit           String   @default("piece") // piece, kg, liter, etc.
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  category       Category        @relation(fields: [categoryId], references: [id])
+  batches        ProductBatch[]
+  saleItems      SaleItem[]
+  purchaseItems  PurchaseItem[]
+  stockMovements StockMovement[]
+
+  @@index([barcode])
+  @@index([name])
+  @@index([categoryId])
+}
+
+model ProductBatch {
+  id             String   @id @default(cuid())
+  productId      String
+  batchNumber    String
+  quantity       Int      @default(0)
+  purchasePrice  Float
+  expirationDate DateTime?
+  isExpired      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  saleItems  SaleItem[]
+
+  @@unique([productId, batchNumber])
+  @@index([productId])
+  @@index([expirationDate])
+}
+
+// ============================================
+// SUPPLIER & CUSTOMER MANAGEMENT
+// ============================================
+
+model Supplier {
+  id          String   @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  balance     Float    @default(0) // Amount owed to supplier
+  creditLimit Float    @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  purchases Purchase[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String?  @unique
+  email         String?
+  address       String?
+  creditBalance Float    @default(0) // Store credit available
+  totalPurchased Float   @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  sales Sale[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+// ============================================
+// SALES & TRANSACTIONS
+// ============================================
+
+model Sale {
+  id             String       @id @default(cuid())
+  invoiceNumber  String       @unique
+  customerId     String?
+  subtotal       Float        @default(0)
+  taxAmount      Float        @default(0)
+  discountAmount Float        @default(0)
+  totalAmount    Float        @default(0)
+  paymentMethod  PaymentMethod
+  paymentStatus  PaymentStatus @default(COMPLETED)
+  notes          String?
+  createdBy      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // Relations
+  customer Customer?  @relation(fields: [customerId], references: [id])
+  user     User      @relation(fields: [createdBy], references: [id])
+  items    SaleItem[]
+
+  @@index([invoiceNumber])
+  @@index([customerId])
+  @@index([createdBy])
+  @@index([createdAt])
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  CREDIT
+  MIXED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  PARTIAL
+  REFUNDED
+  CANCELLED
+}
+
+model SaleItem {
+  id             String @id @default(cuid())
+  saleId         String
+  productBatchId String
+  productId      String
+  quantity       Int
+  unitPrice      Float
+  taxAmount      Float   @default(0)
+  discountAmount Float   @default(0)
+  totalAmount    Float   @default(0)
+  costPrice      Float   @default(0) // For COGS calculation
+
+  // Relations
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
+  productBatch ProductBatch @relation(fields: [productBatchId], references: [id])
+
+  @@index([saleId])
+  @@index([productId])
+  @@index([productBatchId])
+}
+
+// ============================================
+// PURCHASES & PROCUREMENT
+// ============================================
+
+model Purchase {
+  id             String        @id @default(cuid())
+  invoiceNumber  String        @unique
+  supplierId     String
+  subtotal       Float         @default(0)
+  taxAmount      Float         @default(0)
+  totalAmount    Float         @default(0)
+  paymentStatus  PaymentStatus @default(PENDING)
+  paymentMethod  PaymentMethod?
+  notes          String?
+  createdBy      String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relations
+  supplier Supplier     @relation(fields: [supplierId], references: [id])
+  user     User         @relation(fields: [createdBy], references: [id])
+  items    PurchaseItem[]
+
+  @@index([invoiceNumber])
+  @@index([supplierId])
+  @@index([createdAt])
+}
+
+model PurchaseItem {
+  id             String    @id @default(cuid())
+  purchaseId     String
+  productId      String
+  batchNumber    String
+  quantity       Int
+  purchasePrice  Float
+  expirationDate DateTime?
+  totalAmount    Float     @default(0)
+
+  // Relations
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
+}
+
+// ============================================
+// EXPENSES & ACCOUNTING
+// ============================================
+
+model Expense {
+  id          String        @id @default(cuid())
+  title       String
+  description String?
+  amount      Float
+  category    ExpenseCategory
+  paymentMethod PaymentMethod @default(CASH)
+  receiptUrl  String?
+  createdBy   String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  user User @relation(fields: [createdBy], references: [id])
+
+  @@index([category])
+  @@index([createdAt])
+}
+
+enum ExpenseCategory {
+  RENT
+  UTILITIES
+  SALARIES
+  MARKETING
+  MAINTENANCE
+  SUPPLIES
+  INSURANCE
+  TAXES
+  OTHER
+}
+
+// ============================================
+// INVENTORY MANAGEMENT
+// ============================================
+
+model StockMovement {
+  id          String          @id @default(cuid())
+  productId   String
+  type        StockMovementType
+  quantity    Int
+  reason      String?
+  referenceId String? // Sale ID, Purchase ID, etc.
+  createdBy   String
+  createdAt   DateTime        @default(now())
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+enum StockMovementType {
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  RETURN
+  DAMAGE
+  EXPIRED
+  TRANSFER
+}
+
+// ============================================
+// AUDIT & LOGGING
+// ============================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String?
+  oldValues  String? // JSON string
+  newValues  String? // JSON string
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+}
+
+// ============================================
+// CASH DRAWER MANAGEMENT
+// ============================================
+
+model CashDrawer {
+  id              String   @id @default(cuid())
+  openingBalance  Float    @default(0)
+  closingBalance  Float?
+  cashSales       Float    @default(0)
+  cardSales       Float    @default(0)
+  upiSales        Float    @default(0)
+  expenses        Float    @default(0)
+  expectedBalance Float?
+  difference      Float?
+  openedAt        DateTime @default(now())
+  closedAt        DateTime?
+  openedBy        String
+  closedBy        String?
+  status          String   @default("OPEN") // OPEN, CLOSED
+
+  @@index([openedAt])
+  @@index([status])
+}
+
+// ============================================
+// SYSTEM SETTINGS
+// ============================================
+
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+}

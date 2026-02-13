@@ -1,0 +1,17 @@
+services:
+  grocery-erp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/data/grocery.db
+      - JWT_SECRET=change-this-secret-in-production
+    volumes:
+      - grocery-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  grocery-data:
