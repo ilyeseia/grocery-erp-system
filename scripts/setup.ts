@@ -30,28 +30,46 @@ JWT_SECRET="your-super-secret-jwt-key-change-in-production"
 // Step 2: Generate Prisma Client
 console.log('\n📦 Generating Prisma Client...');
 try {
-  await $`bun run db:generate`.quiet();
-  console.log('✅ Prisma client generated');
-} catch (e) {
+  const result = await $`bunx prisma generate`.quiet();
+  if (result.exitCode === 0) {
+    console.log('✅ Prisma client generated');
+  } else {
+    console.log('❌ Failed to generate Prisma client');
+    console.log(result.stderr.toString());
+    process.exit(1);
+  }
+} catch (e: any) {
   console.log('❌ Failed to generate Prisma client');
+  console.log(e.message || e);
   process.exit(1);
 }
 
 // Step 3: Push database schema
 console.log('\n🗄️  Setting up database...');
 try {
-  await $`bun run db:push`.quiet();
-  console.log('✅ Database schema created');
-} catch (e) {
+  const result = await $`bunx prisma db push`.quiet();
+  if (result.exitCode === 0) {
+    console.log('✅ Database schema created');
+  } else {
+    console.log('❌ Failed to create database schema');
+    console.log(result.stderr.toString());
+    process.exit(1);
+  }
+} catch (e: any) {
   console.log('❌ Failed to create database schema');
+  console.log(e.message || e);
   process.exit(1);
 }
 
 // Step 4: Seed database
 console.log('\n🌱 Seeding database...');
 try {
-  await $`bun run db:seed`.quiet();
-  console.log('✅ Database seeded with initial data');
+  const result = await $`bun run prisma/seed.ts`.quiet();
+  if (result.exitCode === 0) {
+    console.log('✅ Database seeded with initial data');
+  } else {
+    console.log('⚠️  Seeding failed (may already have data)');
+  }
 } catch (e) {
   console.log('⚠️  Seeding failed (may already have data)');
 }
