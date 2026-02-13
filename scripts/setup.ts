@@ -27,41 +27,53 @@ JWT_SECRET="your-super-secret-jwt-key-change-in-production"
   console.log('✅ Created default .env file');
 }
 
-// Step 2: Generate Prisma Client
+// Step 2: Install dependencies if needed
+console.log('\n📦 Checking dependencies...');
+try {
+  await $`bun install`.quiet();
+  console.log('✅ Dependencies installed');
+} catch (e) {
+  console.log('⚠️  Could not install dependencies');
+}
+
+// Step 3: Generate Prisma Client using local prisma
 console.log('\n📦 Generating Prisma Client...');
 try {
-  const result = await $`bunx prisma generate`.quiet();
+  const result = await $`./node_modules/.bin/prisma generate`;
   if (result.exitCode === 0) {
     console.log('✅ Prisma client generated');
   } else {
-    console.log('❌ Failed to generate Prisma client');
-    console.log(result.stderr.toString());
-    process.exit(1);
+    // Try alternative method
+    console.log('Trying alternative method...');
+    const result2 = await $`bun x prisma@6.11.1 generate`;
+    if (result2.exitCode === 0) {
+      console.log('✅ Prisma client generated');
+    } else {
+      console.log('❌ Failed to generate Prisma client');
+      console.log('Please run: bun install && bun run db:generate');
+    }
   }
 } catch (e: any) {
   console.log('❌ Failed to generate Prisma client');
-  console.log(e.message || e);
-  process.exit(1);
+  console.log('Please run manually: bun install && bun run db:generate');
 }
 
-// Step 3: Push database schema
+// Step 4: Push database schema
 console.log('\n🗄️  Setting up database...');
 try {
-  const result = await $`bunx prisma db push`.quiet();
+  const result = await $`./node_modules/.bin/prisma db push`;
   if (result.exitCode === 0) {
     console.log('✅ Database schema created');
   } else {
     console.log('❌ Failed to create database schema');
-    console.log(result.stderr.toString());
-    process.exit(1);
+    console.log('Please run: bun run db:push');
   }
 } catch (e: any) {
   console.log('❌ Failed to create database schema');
-  console.log(e.message || e);
-  process.exit(1);
+  console.log('Please run: bun run db:push');
 }
 
-// Step 4: Seed database
+// Step 5: Seed database
 console.log('\n🌱 Seeding database...');
 try {
   const result = await $`bun run prisma/seed.ts`.quiet();
