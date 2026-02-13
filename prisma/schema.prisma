@@ -1,5 +1,6 @@
 // Grocery Store ERP System - Prisma Schema
 // Production-ready database design with proper relations
+// Enhanced with multi-branch, returns, shifts, permissions, and more
 
 generator client {
   provider = "prisma-client-js"
@@ -15,26 +16,39 @@ datasource db {
 // ============================================
 
 model User {
-  id            String   @id @default(cuid())
-  name          String
-  email         String   @unique
-  passwordHash  String
-  role          UserRole @default(CASHIER)
-  isActive      Boolean  @default(true)
-  lastLoginAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  passwordHash   String
+  role           UserRole @default(CASHIER)
+  isActive       Boolean  @default(true)
+  lastLoginAt    DateTime?
+  
+  // Security enhancements
+  loginAttempts  Int      @default(0)
+  lockedUntil    DateTime?
+  permissions    String?  // JSON string for custom permissions
+  branchId       String?
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Relations
-  sales         Sale[]
-  purchases     Purchase[]
-  expenses      Expense[]
-  auditLogs     AuditLog[]
-  refreshTokens RefreshToken[]
-  sessions      Session[]
+  sales              Sale[]
+  purchases          Purchase[]
+  expenses           Expense[]
+  auditLogs          AuditLog[]
+  refreshTokens      RefreshToken[]
+  sessions           Session[]
+  shifts             Shift[]
+  transferRequests   StockTransfer[]  @relation("TransferRequester")
+  transferApprovals  StockTransfer[]  @relation("TransferApprover")
+  transferCompletions StockTransfer[] @relation("TransferCompleter")
+  branch             Branch?          @relation(fields: [branchId], references: [id])
 
   @@index([email])
   @@index([role])
+  @@index([branchId])
 }
 
 enum UserRole {
@@ -71,47 +85,138 @@ model Session {
 }
 
 // ============================================
+// BRANCH MANAGEMENT
+// ============================================
+
+model Branch {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  address     String?
+  phone       String?
+  email       String?
+  managerId   String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users              User[]
+  stockTransfersFrom StockTransfer[]  @relation("TransferFrom")
+  stockTransfersTo   StockTransfer[]  @relation("TransferTo")
+  inventories        Inventory[]
+
+  @@index([code])
+  @@index([name])
+}
+
+// ============================================
 // PRODUCT MANAGEMENT
 // ============================================
 
 model Category {
   id          String   @id @default(cuid())
   name        String   @unique
+  nameAr      String?  // Arabic name
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // Relations
-  products Product[]
+  products      Product[]
+  subCategories SubCategory[]
 
   @@index([name])
 }
 
-model Product {
-  id             String   @id @default(cuid())
-  name           String
-  barcode        String   @unique
-  categoryId     String
-  purchasePrice  Float    @default(0)
-  sellingPrice   Float    @default(0)
-  taxPercentage  Float    @default(0)
-  minStockLevel  Int      @default(10)
-  maxStockLevel  Int      @default(100)
-  unit           String   @default("piece") // piece, kg, liter, etc.
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+model SubCategory {
+  id          String   @id @default(cuid())
+  name        String
+  nameAr      String?  // Arabic name
+  categoryId  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relations
-  category       Category        @relation(fields: [categoryId], references: [id])
-  batches        ProductBatch[]
-  saleItems      SaleItem[]
-  purchaseItems  PurchaseItem[]
-  stockMovements StockMovement[]
+  category Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@index([categoryId])
+  @@unique([name, categoryId])
+}
+
+model Product {
+  id              String   @id @default(cuid())
+  name            String
+  nameAr          String?  // Arabic name
+  barcode         String   @unique
+  categoryId      String
+  subCategoryId   String?
+  supplierId      String?
+  image           String?  // Product image URL or base64
+  purchasePrice   Float    @default(0)
+  sellingPrice    Float    @default(0)
+  taxPercentage   Float    @default(0)
+  minStockLevel   Int      @default(10)
+  maxStockLevel   Int      @default(100)
+  unit            String   @default("piece") // piece, kg, liter, etc.
+  variants        String?  // JSON field for product variants (size, color, etc.)
+  expiryDate      DateTime?
+  expiryAlertDays Int      @default(30)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  category        Category           @relation(fields: [categoryId], references: [id])
+  subCategory     SubCategory?       @relation(fields: [subCategoryId], references: [id])
+  supplier        Supplier?          @relation(fields: [supplierId], references: [id])
+  batches         ProductBatch[]
+  saleItems       SaleItem[]
+  purchaseItems   PurchaseItem[]
+  stockMovements  StockMovement[]
+  priceHistory    ProductPriceHistory[]
+  productVariants ProductVariant[]
 
   @@index([barcode])
   @@index([name])
   @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([supplierId])
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  name        String   // e.g., "Size", "Color"
+  productId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  product      Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantItems ProductVariantItem[]
+
+  @@index([productId])
+}
+
+model ProductVariantItem {
+  id              String   @id @default(cuid())
+  variantId       String
+  productId       String   // For quick lookup
+  name            String   // e.g., "Small", "Red"
+  sku             String?  // Unique SKU for this variant
+  priceAdjustment Float    @default(0) // Price difference from base
+  stock           Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  productVariant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([variantId])
+  @@index([productId])
+  @@unique([variantId, name])
 }
 
 model ProductBatch {
@@ -126,12 +231,30 @@ model ProductBatch {
   updatedAt      DateTime @updatedAt
 
   // Relations
-  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
-  saleItems  SaleItem[]
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  saleItems   SaleItem[]
+  returnItems ReturnItem[]
 
   @@unique([productId, batchNumber])
   @@index([productId])
   @@index([expirationDate])
+}
+
+model ProductPriceHistory {
+  id           String   @id @default(cuid())
+  productId    String
+  oldPrice     Float
+  newPrice     Float
+  priceType    String   // "purchase" or "selling"
+  changedBy    String
+  changeReason String?
+  createdAt    DateTime @default(now())
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([createdAt])
 }
 
 // ============================================
@@ -152,25 +275,28 @@ model Supplier {
 
   // Relations
   purchases Purchase[]
+  products  Product[]
 
   @@index([name])
   @@index([phone])
 }
 
 model Customer {
-  id            String   @id @default(cuid())
-  name          String
-  phone         String?  @unique
-  email         String?
-  address       String?
-  creditBalance Float    @default(0) // Store credit available
-  totalPurchased Float   @default(0)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  phone          String?  @unique
+  email          String?
+  address        String?
+  creditBalance  Float    @default(0) // Store credit available
+  totalPurchased Float    @default(0)
+  loyaltyPoints  Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Relations
-  sales Sale[]
+  sales   Sale[]
+  returns Return[]
 
   @@index([name])
   @@index([phone])
@@ -181,29 +307,37 @@ model Customer {
 // ============================================
 
 model Sale {
-  id             String       @id @default(cuid())
-  invoiceNumber  String       @unique
+  id             String        @id @default(cuid())
+  invoiceNumber  String        @unique
   customerId     String?
-  subtotal       Float        @default(0)
-  taxAmount      Float        @default(0)
-  discountAmount Float        @default(0)
-  totalAmount    Float        @default(0)
+  shiftId        String?
+  subtotal       Float         @default(0)
+  taxAmount      Float         @default(0)
+  discountAmount Float         @default(0)
+  discountType   String?       @default("fixed") // "fixed" or "percentage"
+  totalAmount    Float         @default(0)
   paymentMethod  PaymentMethod
   paymentStatus  PaymentStatus @default(COMPLETED)
   notes          String?
   createdBy      String
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  branchId       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   // Relations
-  customer Customer?  @relation(fields: [customerId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
   user     User      @relation(fields: [createdBy], references: [id])
+  shift    Shift?    @relation(fields: [shiftId], references: [id])
   items    SaleItem[]
+  payments Payment[]
+  returns  Return[]
 
   @@index([invoiceNumber])
   @@index([customerId])
   @@index([createdBy])
   @@index([createdAt])
+  @@index([shiftId])
+  @@index([branchId])
 }
 
 enum PaymentMethod {
@@ -223,7 +357,7 @@ enum PaymentStatus {
 }
 
 model SaleItem {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   saleId         String
   productBatchId String
   productId      String
@@ -231,17 +365,98 @@ model SaleItem {
   unitPrice      Float
   taxAmount      Float   @default(0)
   discountAmount Float   @default(0)
+  discountType   String? @default("fixed") // "fixed" or "percentage"
   totalAmount    Float   @default(0)
   costPrice      Float   @default(0) // For COGS calculation
 
   // Relations
-  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product     Product      @relation(fields: [productId], references: [id])
+  sale         Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
   productBatch ProductBatch @relation(fields: [productBatchId], references: [id])
 
   @@index([saleId])
   @@index([productId])
   @@index([productBatchId])
+}
+
+// ============================================
+// PAYMENTS (Multiple payments per sale)
+// ============================================
+
+model Payment {
+  id            String        @id @default(cuid())
+  saleId        String
+  amount        Float
+  paymentMethod PaymentMethod
+  reference     String? // Transaction reference, check number, etc.
+  notes         String?
+  createdBy     String
+  createdAt     DateTime      @default(now())
+
+  // Relations
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([createdAt])
+}
+
+// ============================================
+// RETURNS
+// ============================================
+
+model Return {
+  id           String        @id @default(cuid())
+  returnNumber String        @unique
+  saleId       String?
+  customerId   String?
+  returnType   ReturnType
+  totalAmount  Float         @default(0)
+  reason       String?
+  status       ReturnStatus  @default(PENDING)
+  processedBy  String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relations
+  sale     Sale?       @relation(fields: [saleId], references: [id])
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  items    ReturnItem[]
+
+  @@index([returnNumber])
+  @@index([saleId])
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+enum ReturnType {
+  FULL
+  PARTIAL
+  EXCHANGE
+}
+
+enum ReturnStatus {
+  PENDING
+  APPROVED
+  COMPLETED
+  REJECTED
+}
+
+model ReturnItem {
+  id             String  @id @default(cuid())
+  returnId       String
+  productId      String
+  productBatchId String?
+  quantity       Int
+  unitPrice      Float
+  totalAmount    Float
+  reason         String?
+
+  // Relations
+  return       Return       @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  productBatch ProductBatch? @relation(fields: [productBatchId], references: [id])
+
+  @@index([returnId])
+  @@index([productId])
 }
 
 // ============================================
@@ -259,17 +474,19 @@ model Purchase {
   paymentMethod  PaymentMethod?
   notes          String?
   createdBy      String
+  branchId       String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
   // Relations
-  supplier Supplier     @relation(fields: [supplierId], references: [id])
-  user     User         @relation(fields: [createdBy], references: [id])
+  supplier Supplier      @relation(fields: [supplierId], references: [id])
+  user     User          @relation(fields: [createdBy], references: [id])
   items    PurchaseItem[]
 
   @@index([invoiceNumber])
   @@index([supplierId])
   @@index([createdAt])
+  @@index([branchId])
 }
 
 model PurchaseItem {
@@ -295,22 +512,24 @@ model PurchaseItem {
 // ============================================
 
 model Expense {
-  id          String        @id @default(cuid())
-  title       String
-  description String?
-  amount      Float
-  category    ExpenseCategory
-  paymentMethod PaymentMethod @default(CASH)
-  receiptUrl  String?
-  createdBy   String
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id            String          @id @default(cuid())
+  title         String
+  description   String?
+  amount        Float
+  category      ExpenseCategory
+  paymentMethod PaymentMethod   @default(CASH)
+  receiptUrl    String?
+  createdBy     String
+  branchId      String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   // Relations
   user User @relation(fields: [createdBy], references: [id])
 
   @@index([category])
   @@index([createdAt])
+  @@index([branchId])
 }
 
 enum ExpenseCategory {
@@ -329,15 +548,33 @@ enum ExpenseCategory {
 // INVENTORY MANAGEMENT
 // ============================================
 
+model Inventory {
+  id          String   @id @default(cuid())
+  productId   String
+  branchId    String
+  quantity    Int      @default(0)
+  reservedQty Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  branch Branch @relation(fields: [branchId], references: [id])
+  
+  @@unique([productId, branchId])
+  @@index([productId])
+  @@index([branchId])
+}
+
 model StockMovement {
-  id          String          @id @default(cuid())
+  id          String            @id @default(cuid())
   productId   String
   type        StockMovementType
   quantity    Int
   reason      String?
-  referenceId String? // Sale ID, Purchase ID, etc.
+  referenceId String? // Sale ID, Purchase ID, Transfer ID, etc.
+  branchId    String?
   createdBy   String
-  createdAt   DateTime        @default(now())
+  createdAt   DateTime          @default(now())
 
   // Relations
   product Product @relation(fields: [productId], references: [id])
@@ -345,6 +582,7 @@ model StockMovement {
   @@index([productId])
   @@index([type])
   @@index([createdAt])
+  @@index([branchId])
 }
 
 enum StockMovementType {
@@ -354,7 +592,94 @@ enum StockMovementType {
   RETURN
   DAMAGE
   EXPIRED
-  TRANSFER
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+model StockTransfer {
+  id             String          @id @default(cuid())
+  transferNumber String          @unique
+  fromBranchId   String
+  toBranchId     String
+  status         TransferStatus  @default(PENDING)
+  notes          String?
+  requestedBy    String
+  approvedBy     String?
+  completedBy    String?
+  requestedAt    DateTime        @default(now())
+  approvedAt     DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  // Relations
+  fromBranch Branch             @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranch   Branch             @relation("TransferTo", fields: [toBranchId], references: [id])
+  requester  User               @relation("TransferRequester", fields: [requestedBy], references: [id])
+  approver   User?              @relation("TransferApprover", fields: [approvedBy], references: [id])
+  completer  User?              @relation("TransferCompleter", fields: [completedBy], references: [id])
+  items      StockTransferItem[]
+
+  @@index([transferNumber])
+  @@index([fromBranchId])
+  @@index([toBranchId])
+  @@index([status])
+}
+
+enum TransferStatus {
+  PENDING
+  APPROVED
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
+}
+
+model StockTransferItem {
+  id         String @id @default(cuid())
+  transferId String
+  productId  String
+  quantity   Int
+  notes      String?
+
+  // Relations
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  @@index([transferId])
+  @@index([productId])
+}
+
+// ============================================
+// SHIFT MANAGEMENT
+// ============================================
+
+model Shift {
+  id              String   @id @default(cuid())
+  userId          String
+  branchId        String?
+  openingBalance  Float    @default(0)
+  closingBalance  Float?
+  cashSales       Float    @default(0)
+  cardSales       Float    @default(0)
+  upiSales        Float    @default(0)
+  creditSales     Float    @default(0)
+  totalSales      Float    @default(0)
+  totalRefunds    Float    @default(0)
+  expenses        Float    @default(0)
+  expectedBalance Float?
+  difference      Float?
+  status          String   @default("OPEN") // OPEN, CLOSED
+  openedAt        DateTime @default(now())
+  closedAt        DateTime?
+  notes           String?
+
+  // Relations
+  user  User   @relation(fields: [userId], references: [id])
+  sales Sale[]
+
+  @@index([userId])
+  @@index([branchId])
+  @@index([status])
+  @@index([openedAt])
 }
 
 // ============================================
@@ -371,6 +696,8 @@ model AuditLog {
   newValues  String? // JSON string
   ipAddress  String?
   userAgent  String?
+  branchId   String?
+  sessionId  String?
   createdAt  DateTime @default(now())
 
   // Relations
@@ -380,6 +707,39 @@ model AuditLog {
   @@index([action])
   @@index([entityType])
   @@index([createdAt])
+  @@index([branchId])
+}
+
+// ============================================
+// PERMISSIONS
+// ============================================
+
+model Permission {
+  id              String           @id @default(cuid())
+  name            String           @unique
+  description     String?
+  module          String // e.g., "sales", "products", "inventory"
+  action          String // e.g., "create", "read", "update", "delete"
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  rolePermissions RolePermission[]
+
+  @@index([name])
+  @@index([module])
+}
+
+model RolePermission {
+  id           String   @id @default(cuid())
+  roleId       String // UserRole as string
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
 }
 
 // ============================================
@@ -400,10 +760,12 @@ model CashDrawer {
   closedAt        DateTime?
   openedBy        String
   closedBy        String?
+  branchId        String?
   status          String   @default("OPEN") // OPEN, CLOSED
 
   @@index([openedAt])
   @@index([status])
+  @@index([branchId])
 }
 
 // ============================================
@@ -415,8 +777,31 @@ model Setting {
   key         String   @unique
   value       String
   description String?
+  branchId    String? // For branch-specific settings
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([key])
+  @@index([branchId])
+}
+
+// ============================================
+// IMPORT LOG (Excel import tracking)
+// ============================================
+
+model ImportLog {
+  id           String   @id @default(cuid())
+  type         String // "products", "customers", "suppliers", etc.
+  fileName     String
+  totalRows    Int
+  successCount Int
+  errorCount   Int
+  errors       String? // JSON string with error details
+  status       String  @default("PROCESSING") // PROCESSING, COMPLETED, FAILED
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
 }
