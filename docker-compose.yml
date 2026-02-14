@@ -8,10 +8,38 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/data/grocery.db
-      - JWT_SECRET=change-this-secret-in-production
+      # JWT_SECRET must be set via .env file or command line
+      # Generate with: openssl rand -base64 32
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
     volumes:
       - grocery-data:/app/data
     restart: unless-stopped
+    # Health check for container monitoring
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
 
 volumes:
   grocery-data:

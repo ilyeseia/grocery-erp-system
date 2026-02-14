@@ -3,9 +3,18 @@ import jwt from 'jsonwebtoken';
 import { db } from './db';
 import { User, UserRole } from '@prisma/client';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
+// Security: JWT_SECRET must be set via environment variable
+// Generate a secure secret with: openssl rand -base64 32
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET environment variable is not set. Please set it before starting the application.');
+}
 const JWT_EXPIRES_IN = '15m';
 const REFRESH_TOKEN_EXPIRES_IN = '7d';
+
+// Login attempt tracking for account lockout
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 export interface JWTPayload {
   userId: string;
@@ -108,6 +117,45 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
 export async function invalidateRefreshToken(refreshToken: string): Promise<void> {
   await db.refreshToken.deleteMany({
     where: { token: refreshToken },
+  });
+}
+
+// Check if account is locked
+export function isAccountLocked(user: User): boolean {
+  if (!user.lockedUntil) return false;
+  return new Date() < user.lockedUntil;
+}
+
+// Handle failed login attempt
+export async function handleFailedLogin(userId: string): Promise<{ locked: boolean; attemptsRemaining: number }> {
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) return { locked: false, attemptsRemaining: 0 };
+  
+  const newAttempts = user.loginAttempts + 1;
+  const shouldLock = newAttempts >= MAX_LOGIN_ATTEMPTS;
+  
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      loginAttempts: newAttempts,
+      lockedUntil: shouldLock ? new Date(Date.now() + LOCKOUT_DURATION_MS) : null,
+    },
+  });
+  
+  return {
+    locked: shouldLock,
+    attemptsRemaining: Math.max(0, MAX_LOGIN_ATTEMPTS - newAttempts),
+  };
+}
+
+// Reset login attempts on successful login
+export async function resetLoginAttempts(userId: string): Promise<void> {
+  await db.user.update({
+    where: { id: userId },
+    data: {
+      loginAttempts: 0,
+      lockedUntil: null,
+    },
   });
 }
 

@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Design Tokens - See src/lib/design-tokens.css for full token system */
+/* Import design tokens for custom properties */
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
